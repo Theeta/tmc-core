@@ -20,6 +20,7 @@ import fi.helsinki.cs.tmc.core.communication.HttpResult;
 import fi.helsinki.cs.tmc.core.communication.SubmissionPoller;
 import fi.helsinki.cs.tmc.core.communication.TmcApi;
 import fi.helsinki.cs.tmc.core.communication.UrlCommunicator;
+import fi.helsinki.cs.tmc.core.communication.UrlHelper;
 import fi.helsinki.cs.tmc.core.communication.updates.ExerciseUpdateHandler;
 import fi.helsinki.cs.tmc.core.communication.updates.ReviewHandler;
 import fi.helsinki.cs.tmc.core.configuration.TmcSettings;
@@ -110,11 +111,17 @@ public class TmcCore {
     /**
      * Fetch one course from tmc-server.
      *
-     * @param url defines the url to course
+     * @param id defines the id of the course
      */
-    public ListenableFuture<Course> getCourse(URI url) throws TmcCoreException {
+    public ListenableFuture<Course> getCourse(int id) throws TmcCoreException {
         checkParameters(settings.getUsername(), settings.getPassword());
-        GetCourse getter = new GetCourse(settings, url);
+        UrlHelper urlHelper = new UrlHelper(settings);
+        GetCourse getter = null;
+        try {
+            getter = new GetCourse(settings, urlHelper.getCourseUrl(id));
+        } catch (URISyntaxException e) {
+            throw new TmcCoreException(e);
+        }
         return threadPool.submit(getter);
     }
 

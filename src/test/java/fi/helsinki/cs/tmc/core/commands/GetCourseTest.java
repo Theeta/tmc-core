@@ -31,6 +31,7 @@ public class GetCourseTest {
 
     private UrlHelper urlHelper;
     private URI finalUrl = new URI("http://127.0.0.1:8080/courses/19.json");
+    private int finalId = 19;
     private UrlMatchingStrategy mockUrl;
     private TmcCore core;
     private CoreTestSettings settings;
@@ -53,19 +54,19 @@ public class GetCourseTest {
     @Test(expected = TmcCoreException.class)
     public void testCheckDataPassword() throws Exception {
         core = new TmcCore(createSettingsWith("", "asdjh", "adsljads"));
-        core.getCourse(finalUrl);
+        core.getCourse(finalId);
     }
 
     @Test(expected = TmcCoreException.class)
     public void testCheckDataUsername() throws Exception {
         core = new TmcCore(createSettingsWith("asda", "", "asdasdjkhj"));
-        core.getCourse(finalUrl);
+        core.getCourse(finalId);
     }
 
     @Test
     public void testCheckAllPresent() throws Exception {
         core = new TmcCore(createSettingsWith("asda", "asdjh", "asdu"));
-        core.getCourse(finalUrl);
+        core.getCourse(finalId);
     }
 
     private CoreTestSettings createSettingsWith(String password, String username, String address) {
@@ -85,7 +86,7 @@ public class GetCourseTest {
                                         .withStatus(200)
                                         .withBody(ExampleJson.courseExample)));
 
-        ListenableFuture<Course> getCourse = core.getCourse(finalUrl);
+        ListenableFuture<Course> getCourse = core.getCourse(finalId);
         Course course = getCourse.get();
         assertEquals(course.getId(), 3);
         assertEquals(course.getName(), "2013_ohpeJaOhja");
