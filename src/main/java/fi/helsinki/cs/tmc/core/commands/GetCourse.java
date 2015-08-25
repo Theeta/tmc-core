@@ -1,5 +1,7 @@
 package fi.helsinki.cs.tmc.core.commands;
 
+import fi.helsinki.cs.tmc.core.cache.Cache;
+import fi.helsinki.cs.tmc.core.cache.CourseCache;
 import fi.helsinki.cs.tmc.core.communication.TmcApi;
 import fi.helsinki.cs.tmc.core.communication.UrlHelper;
 import fi.helsinki.cs.tmc.core.configuration.TmcSettings;
@@ -19,28 +21,32 @@ import java.util.List;
 public class GetCourse extends Command<Course> {
 
     private TmcApi tmcApi;
-    private String url;
+    private URI url;
 
     /**
      * Constructs a new get course command with {@code settings} for fetching course details for
      * {@code courseName}.
      */
-    public GetCourse(TmcSettings settings, String courseName) throws TmcCoreException {
+    public GetCourse(TmcSettings settings, String courseName, CourseCache courseCache, Cache.QueryStrategy queryStrategy) throws TmcCoreException {
         super(settings);
 
         this.tmcApi = new TmcApi(settings);
-        this.url = pollServerForCourseUrl(courseName);
+        try {
+            this.url = new URI(pollServerForCourseUrl(courseName));
+        } catch (URISyntaxException e) {
+            throw new TmcCoreException("Unable to construct course URI", e);
+        }
     }
 
     /**
      * Constructs a new get course command with {@code settings} for fetching course details from
      * {@code courseUri}.
      */
-    public GetCourse(TmcSettings settings, URI courseUri) {
+    public GetCourse(TmcSettings settings, URI courseUri, CourseCache courseCache, Cache.QueryStrategy queryStrategy) {
         super(settings);
 
         this.tmcApi = new TmcApi(settings);
-        this.url = courseUri.toString();
+        this.url = courseUri;
     }
 
     /**
@@ -51,7 +57,7 @@ public class GetCourse extends Command<Course> {
         validate(this.settings.getUsername(), "Username must be set!");
         validate(this.settings.getPassword(), "Password must be set!");
 
-        String urlWithApiVersion = new UrlHelper(settings).withParams(this.url);
+        String urlWithApiVersion = new UrlHelper(settings).withParams(this.url.toString());
         Optional<Course> course;
         try {
             course = tmcApi.getCourse(urlWithApiVersion);

@@ -2,7 +2,13 @@ package fi.helsinki.cs.tmc.core;
 
 import static com.google.common.base.Strings.isNullOrEmpty;
 
-import fi.helsinki.cs.tmc.core.cache.ExerciseChecksumFileCache;
+import fi.helsinki.cs.tmc.core.cache.Cache;
+import fi.helsinki.cs.tmc.core.cache.CourseCache;
+import fi.helsinki.cs.tmc.core.cache.ExerciseChecksumCache;
+import fi.helsinki.cs.tmc.core.cache.FileBasedCourseCache;
+import fi.helsinki.cs.tmc.core.cache.FileBasedExerciseChecksumCache;
+import fi.helsinki.cs.tmc.core.cache.InMemoryCourseCache;
+import fi.helsinki.cs.tmc.core.cache.InMemoryExerciseChecksumCache;
 import fi.helsinki.cs.tmc.core.commands.DownloadExercises;
 import fi.helsinki.cs.tmc.core.commands.GetCourse;
 import fi.helsinki.cs.tmc.core.commands.GetExerciseUpdates;
@@ -40,14 +46,10 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
-import java.net.URISyntaxException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -55,7 +57,8 @@ import java.util.concurrent.Executors;
 public class TmcCore {
 
     private ListeningExecutorService threadPool;
-    private ExerciseChecksumFileCache updateCache;
+    private ExerciseChecksumCache exerciseChecksumCache;
+    private CourseCache courseCache;
     private TmcSettings settings;
 
     /**
@@ -63,36 +66,57 @@ public class TmcCore {
      * The TmcCore provides all the essential backend functionalities as public methods.
      */
     public TmcCore(TmcSettings settings) {
-        this(settings, MoreExecutors.listeningDecorator(Executors.newCachedThreadPool()));
+        this(
+                settings,
+                MoreExecutors.listeningDecorator(Executors.newCachedThreadPool()));
     }
 
     public TmcCore(TmcSettings settings, ListeningExecutorService pool) {
-        this.settings = settings;
-        this.threadPool = pool;
+        this(
+                settings,
+                pool,
+                new InMemoryExerciseChecksumCache(),
+                new InMemoryCourseCache());
     }
 
     public TmcCore(TmcSettings settings,
                    Path exerciseChecksumCacheLocation,
+                   Path courseCacheLocation,
                    ListeningExecutorService threadPool)
             throws FileNotFoundException {
-        this(settings, threadPool);
+        this(
+                settings,
+                threadPool,
+                new FileBasedExerciseChecksumCache(exerciseChecksumCacheLocation),
+                new FileBasedCourseCache(courseCacheLocation));
+    }
 
-        this.updateCache = new ExerciseChecksumFileCache(exerciseChecksumCacheLocation);
+    public TmcCore(TmcSettings settings,
+                   ListeningExecutorService threadPool,
+                   ExerciseChecksumCache exerciseChecksumCache,
+                   CourseCache courseCache) {
+        this.settings = settings;
+        this.threadPool = threadPool;
+        this.exerciseChecksumCache = exerciseChecksumCache;
+        this.courseCache = courseCache;
     }
 
     public void setExerciseChecksumCacheLocation(Path newCache) throws IOException {
-        if (newCache == null || Files.notExists(newCache)) {
-            throw new FileNotFoundException("Attempted to set non-existent cache file");
-        }
-        if (updateCache == null) {
-            updateCache = new ExerciseChecksumFileCache(Paths.get(newCache.toString()));
-        } else {
-            updateCache.moveCache(Paths.get(newCache.toString()));
-        }
+        //TODO
     }
 
     public Path getExerciseChecksumCacheLocation() {
-        return this.updateCache.getCacheFile();
+        //TODO
+        return null;
+    }
+
+    public void setCourseCacheLocation(Path newCache) throws IOException {
+        //TODO
+    }
+
+    public Path getCourseCacheLocation() {
+        //TODO
+        return null;
     }
 
     /**
@@ -143,7 +167,7 @@ public class TmcCore {
             Path path, int courseId, ProgressObserver observer)
             throws TmcCoreException {
         DownloadExercises downloadCommand
-                = new DownloadExercises(settings, path.toString(), courseId, observer, updateCache);
+                = new DownloadExercises(settings, path, courseId, observer, exerciseChecksumCache, courseCache, Cache.QueryStrategy.FORCE_UPDATE);
         return threadPool.submit(downloadCommand);
     }
 
@@ -161,11 +185,10 @@ public class TmcCore {
     /**
      * Downloads exercises.
      */
-    public ListenableFuture<List<Exercise>> downloadExercises(
-            List<Exercise> exercises, ProgressObserver observer)
+    public ListenableFuture<List<Exercise>> downloadExercises(List<Exercise> exercises, ProgressObserver observer)
             throws TmcCoreException {
         DownloadExercises downloadCommand
-                = new DownloadExercises(settings, exercises, observer, updateCache);
+                = new DownloadExercises(settings, exercises, observer, exerciseChecksumCache, courseCache, Cache.QueryStrategy.FORCE_UPDATE);
         return threadPool.submit(downloadCommand);
     }
 
@@ -177,7 +200,7 @@ public class TmcCore {
      * @throws TmcCoreException if something went wrong
      */
     public ListenableFuture<List<Course>> listCourses() throws TmcCoreException {
-        ListCourses listCommand = new ListCourses(settings);
+        ListCourses listCommand = new ListCourses(settings, courseCache, Cache.QueryStrategy.FORCE_UPDATE);
         return threadPool.submit(listCommand);
     }
 
@@ -263,7 +286,7 @@ public class TmcCore {
     public ListenableFuture<List<Exercise>> getNewAndUpdatedExercises(Course course)
             throws TmcCoreException {
         ExerciseUpdateHandler updater =
-                new ExerciseUpdateHandler(updateCache, new TmcApi(settings));
+                new ExerciseUpdateHandler(exerciseChecksumCache, new TmcApi(settings));
         GetExerciseUpdates command = new GetExerciseUpdates(course, updater);
         return threadPool.submit(command);
     }

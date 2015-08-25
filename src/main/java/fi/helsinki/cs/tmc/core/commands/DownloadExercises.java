@@ -1,5 +1,7 @@
 package fi.helsinki.cs.tmc.core.commands;
 
+import fi.helsinki.cs.tmc.core.cache.Cache;
+import fi.helsinki.cs.tmc.core.cache.CourseCache;
 import fi.helsinki.cs.tmc.core.cache.ExerciseChecksumCache;
 import fi.helsinki.cs.tmc.core.communication.ExerciseDownloader;
 import fi.helsinki.cs.tmc.core.communication.TmcApi;
@@ -7,9 +9,9 @@ import fi.helsinki.cs.tmc.core.communication.UrlCommunicator;
 import fi.helsinki.cs.tmc.core.configuration.TmcSettings;
 import fi.helsinki.cs.tmc.core.domain.Course;
 import fi.helsinki.cs.tmc.core.domain.Exercise;
+import fi.helsinki.cs.tmc.core.domain.LocalExercise;
 import fi.helsinki.cs.tmc.core.domain.ProgressObserver;
 import fi.helsinki.cs.tmc.core.exceptions.TmcCoreException;
-import fi.helsinki.cs.tmc.core.exceptions.TmcInterruptionException;
 
 import com.google.common.base.Optional;
 
@@ -26,11 +28,13 @@ import java.util.List;
 public class DownloadExercises extends Command<List<Exercise>> {
 
     private ExerciseDownloader exerciseDownloader;
-    private ExerciseChecksumCache cache;
+    private ExerciseChecksumCache exerciseChecksumCache;
     private TmcApi tmcApi;
     private List<Exercise> exercises;
     private int courseId;
-    private String path;
+    private Path downloadsRoot;
+    private CourseCache courseCache;
+    private Cache.QueryStrategy queryStrategy;
 
     /**
      *  Constructs a new downloaded exercises command for downloading {@code exercises} into TMC
@@ -39,20 +43,24 @@ public class DownloadExercises extends Command<List<Exercise>> {
      * @param settings      Provides login credentials and download location.
      * @param exercises     List of exercises to download.
      * @param observer      This observer is notified of command's progress. May be {@code null}.
-     * @param cache         A cache for storing the downloads.
+     * @param exerciseChecksumCache         A cache for storing the downloads.
      */
     public DownloadExercises(
             TmcSettings settings,
             List<Exercise> exercises,
             ProgressObserver observer,
-            ExerciseChecksumCache cache)
+            ExerciseChecksumCache exerciseChecksumCache,
+            CourseCache courseCache,
+            Cache.QueryStrategy queryStrategy)
             throws TmcCoreException {
         super(settings, observer);
 
         this.tmcApi = new TmcApi(settings);
         this.exerciseDownloader = new ExerciseDownloader(new UrlCommunicator(settings), tmcApi);
         this.exercises = exercises;
-        this.path = settings.getTmcMainDirectory();
+        this.downloadsRoot = Paths.get(settings.getTmcMainDirectory());
+        this.courseCache = courseCache;
+        this.queryStrategy = queryStrategy;
 
         Optional<Course> currentCourse = settings.getCurrentCourse();
         if (currentCourse.isPresent()) {
@@ -61,62 +69,70 @@ public class DownloadExercises extends Command<List<Exercise>> {
             throw new TmcCoreException("Unable to determine course, cannot download");
         }
 
-        this.cache = cache;
+        this.exerciseChecksumCache = exerciseChecksumCache;
     }
 
     /**
      * Constructs a new downloaded exercises command for downloading exercises of the course
-     * identified by {@code courseId} into {@code path}.
+     * identified by {@code courseId} into {@code downloadsRoot}.
      *
      * @param settings      Provides login credentials and download location.
-     * @param path          Target path for downloads.
+     * @param downloadsRoot          Target path for downloads.
      * @param courseId      Identifies which course's exercises should be downloaded.
      * @param observer      This observer is notified of command's progress. May be {@code null}.
-     * @param cache         A cache for storing the downloads.
+     * @param exerciseChecksumCache         A cache for storing the downloads.
      */
     public DownloadExercises(
             TmcSettings settings,
-            String path,
+            Path downloadsRoot,
             int courseId,
             ProgressObserver observer,
-            ExerciseChecksumCache cache) {
+            ExerciseChecksumCache exerciseChecksumCache,
+            CourseCache courseCache,
+            Cache.QueryStrategy queryStrategy) {
         super(settings, observer);
 
-        this.path = path;
+        this.downloadsRoot = downloadsRoot;
         this.courseId = courseId;
         this.tmcApi = new TmcApi(settings);
         this.exerciseDownloader = new ExerciseDownloader(new UrlCommunicator(settings), tmcApi);
-        this.cache = cache;
+        this.exerciseChecksumCache = exerciseChecksumCache;
         this.tmcApi = new TmcApi(settings);
+        this.courseCache = courseCache;
+        this.queryStrategy = queryStrategy;
     }
 
     /**
      * Constructs a new download exercises command for downloading exercises of the course
-     * identified by {@code courseId} into {@code path}.
+     * identified by {@code courseId} into {@code downloadsRoot}.
      *
      * @param settings      Provides login credentials and download location.
-     * @param path          Target path for downloads.
+     * @param downloadsRoot          Target path for downloads.
      * @param courseId      Identifies which course's exercises should be downloaded.
-     * @param cache         A cache for storing the downloads.
+     * @param exerciseChecksumCache         A cache for storing the downloads.
      * @param observer      This observer is notified of command's progress. May be {@code null}.
      * @param downloader    Downloader to download the the exercises with.
      * @param tmcApi        TMC server connector for querying the server with.
      */
     public DownloadExercises(
             TmcSettings settings,
-            String path,
+            Path downloadsRoot,
             int courseId,
-            ExerciseChecksumCache cache,
+            ExerciseChecksumCache exerciseChecksumCache,
+            CourseCache courseCache,
             ProgressObserver observer,
             ExerciseDownloader downloader,
-            TmcApi tmcApi) {
+            TmcApi tmcApi,
+            Cache.QueryStrategy queryStrategy) {
         super(settings, observer);
 
         this.exerciseDownloader = downloader;
         this.courseId = courseId;
-        this.path = path;
-        this.cache = cache;
+        this.downloadsRoot = downloadsRoot;
+        this.exerciseChecksumCache = exerciseChecksumCache;
+        this.courseCache = courseCache;
         this.tmcApi = tmcApi;
+        this.queryStrategy = queryStrategy;
     }
 
     /**
@@ -138,20 +154,12 @@ public class DownloadExercises extends Command<List<Exercise>> {
 
         List<Exercise> downloadedExercises = downloadExercises(course);
 
-        if (cache != null) {
-            try {
-                cache.write(exercises);
-            } catch (IOException e) {
-                throw new TmcCoreException("Unable to write exercise checksums to cache", e);
-            }
-        }
-
         return downloadedExercises;
     }
 
 
-    private List<Exercise> downloadExercises(Course course) throws TmcInterruptionException {
-        Path target = Paths.get(exerciseDownloader.createCourseFolder(this.path, course.getName()));
+    private List<Exercise> downloadExercises(Course course) throws TmcCoreException {
+        Path target = Paths.get(exerciseDownloader.createCourseFolder(downloadsRoot.toString(), course.getName()));
         List<Exercise> downloaded = new ArrayList<>();
 
         for (int i = 0; i < exercises.size(); i++) {
@@ -165,6 +173,7 @@ public class DownloadExercises extends Command<List<Exercise>> {
             String message = "Downloading exercise " + exercise.getName() + " failed";
             if (success) {
                 downloaded.add(exercise);
+                cache(target, exercise);
                 message = "Downloading exercise " + exercise.getName() + " was successful";
             }
 
@@ -174,22 +183,61 @@ public class DownloadExercises extends Command<List<Exercise>> {
         return downloaded;
     }
 
-    private Course getCourse() throws TmcCoreException {
+    private void cache(Path courseDir, Exercise exercise) throws TmcCoreException {
+        Path exercisePath = courseDir.resolve(exercise.getName());
         try {
-            Optional<Course> courseResult = this.tmcApi.getCourse(this.courseId);
-
-            if (!courseResult.isPresent()) {
-                throw new TmcCoreException(
-                        "Unable to download exercises: unable to identify course. ");
-            }
-
-            return courseResult.get();
-
-        } catch (IOException | URISyntaxException ex) {
-            throw new TmcCoreException(
-                    "Unable to download exercises: unable to get course details", ex);
+            LocalExercise localExercise = new LocalExercise(
+                    courseId, exercise.getName(), exercise.getChecksum());
+            exerciseChecksumCache.put(exercisePath, localExercise);
+        } catch (IOException e) {
+            throw new TmcCoreException("Failed to cache downloaded exercise");
         }
     }
 
+    private Course getCourse() throws TmcCoreException {
+        if (queryStrategy == Cache.QueryStrategy.PREFER_LOCAL) {
+            return getCourseFromCache();
+        } else {
+            return getCourseFromServer();
+        }
+    }
+
+    private Course getCourseFromCache() throws TmcCoreException {
+        Course currentCourse;
+
+        try {
+            currentCourse = this.courseCache.get(this.courseId);
+        } catch (IOException e) {
+            throw new TmcCoreException("Failed to fetch current course's details from course cache.");
+        }
+
+        if (currentCourse ==  null) {
+            throw new TmcCoreException("Failed to fetch current course's details from course cache.");
+        }
+
+        return currentCourse;
+    }
+
+    private Course getCourseFromServer() throws TmcCoreException {
+        Optional<Course> courseOptional;
+
+        try {
+            courseOptional = tmcApi.getCourse(this.courseId);
+        } catch (IOException | URISyntaxException e) {
+            throw new TmcCoreException("Failed to fetch current course's details from server.");
+        }
+
+        if (courseOptional.isPresent()) {
+            Course course = courseOptional.get();
+            try {
+                courseCache.put(course.getId(), course);
+            } catch (IOException e) {
+                throw new TmcCoreException("Failed to cache retrieved course", e);
+            }
+            return course;
+        } else {
+            throw new TmcCoreException("Failed to fetch current course's details from server.");
+        }
+    }
 
 }
